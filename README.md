@@ -1,3 +1,3 @@
 # flare
 
-Tool  to help debug kubernetes clusters
+Tool to help debug kubernetes deployments
