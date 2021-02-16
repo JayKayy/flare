@@ -4,18 +4,14 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
+
 	log "github.com/sirupsen/logrus"
-	appsv1 "k8s.io/api/apps/v1"
-	apiv1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
-	"k8s.io/client-go/util/retry"
-	"os"
-	"path/filepath"
-	"reflect"
-	"strings"
 )
 
 /*
@@ -44,16 +40,21 @@ check componentstatus
 */
 func main() {
 
+	// Allow writing to file at some point
+
+	results := bufio.NewWriter(os.Stdout)
 	// Setup auth for cluster
 	clientset := auth()
 
 	// Check health of master components
-	checkMasterComponents(clientset)
-
+	controlPlaneHealth := checkMasterComponents(clientset)
+	// Write  ✓ Control Plane Health to buffer
+	tallyResults(results, "API Responsive", controlPlaneHealth)
 	// Check infrastructure pods health
 	//checkInfraHealth(clientset)
 
 	// Check Nodes
+
 	//checkNodeAvailability(clientset)
 	//checkNodeCapacity(clientset)
 
@@ -125,14 +126,18 @@ func main() {
 	*/
 }
 
-func checkMasterComponents(clientset *kubernetes.Clientset) (bool, *string) {
-	componentsClient := clientset.AppsV1().ComponentStatus(apiv1.NamespaceDefault)
-	fmt.Printf("components status: %s\n", reflect.TypeOf(componentsClient))
+func checkMasterComponents(clientset *kubernetes.Clientset) bool {
+	_, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
+	check(err)
+
+	return true
 }
-func check(e error) {
+func check(e error) bool {
 	if e != nil {
 		log.Fatal(e)
+		return false
 	}
+	return true
 }
 func int32Ptr(i int32) *int32 { return &i }
 func prompt() {
@@ -163,4 +168,19 @@ func auth() *kubernetes.Clientset {
 	check(err)
 
 	return clientset
+}
+func tallyResults(buffer *bufio.Writer, component string, result bool) bool {
+	// symbol  ✓
+	// symbol  ✗
+	colorReset := "\033[0m"
+	colorGreen := "\033[32m"
+	colorRed := "\033[31m"
+	symbol := fmt.Sprintf("%s%s%s", string(colorGreen), "✓", string(colorReset))
+	if !result {
+		symbol = fmt.Sprintf("%s%s%s", string(colorRed), "✗", string(colorReset))
+	}
+	buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, component)))
+	err := buffer.Flush()
+	return check(err)
+
 }
