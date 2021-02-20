@@ -47,11 +47,16 @@ func main() {
 	clientset := auth()
 
 	// Check health of master components
-	controlPlaneHealth := checkMasterComponents(clientset)
+	controlPlaneBool, controlPlaneInfo := checkMasterComponents(clientset)
 	// Write  ✓ Control Plane Health to buffer
-	tallyResults(results, "API Responsive", controlPlaneHealth)
+	tallyResults(results, "API Responsive", controlPlaneBool, controlPlaneInfo)
 	// Check infrastructure pods health
-	//checkInfraHealth(clientset)
+	infraPodsBool, infraPodInfo := checkInfraHealth(clientset)
+	if infraPodsBool {
+		tallyResults(results, "Infrastructure Pod Health", infraPodsBool, infraPodInfo)
+	} else {
+		tallyResults(results, "Infrastructure Pods Health", infraPodsBool, infraPodInfo)
+	}
 
 	// Check Nodes
 
@@ -126,11 +131,37 @@ func main() {
 	*/
 }
 
-func checkMasterComponents(clientset *kubernetes.Clientset) bool {
-	_, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
+// Detect whether there are pod restarts in the kube-system namespace
+func checkInfraHealth(clientset *kubernetes.Clientset) (bool, string) {
+	output, err := clientset.CoreV1().Pods("kube-system").List(v1.ListOptions{})
 	check(err)
+	var info string
 
-	return true
+	info = ""
+
+	for _, pod := range output.Items {
+		if pod.Status.ContainerStatuses[0].RestartCount > 0 {
+			//if info == "" {
+			//	info = info + "\n"
+			//}
+			info = info + pod.GetName() + "\n"
+		}
+	}
+	if info == "" {
+		return true, ""
+	}
+	return false, info
+}
+
+// Check that the API responds
+func checkMasterComponents(clientset *kubernetes.Clientset) (bool, string) {
+	_, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
+	if !check(err) {
+		return false, "Connectivity failure"
+	} else {
+		return true, ""
+	}
+
 }
 func check(e error) bool {
 	if e != nil {
@@ -169,7 +200,7 @@ func auth() *kubernetes.Clientset {
 
 	return clientset
 }
-func tallyResults(buffer *bufio.Writer, component string, result bool) bool {
+func tallyResults(buffer *bufio.Writer, component string, result bool, info string) bool {
 	// symbol  ✓
 	// symbol  ✗
 	colorReset := "\033[0m"
@@ -179,8 +210,7 @@ func tallyResults(buffer *bufio.Writer, component string, result bool) bool {
 	if !result {
 		symbol = fmt.Sprintf("%s%s%s", string(colorRed), "✗", string(colorReset))
 	}
-	buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, component)))
+	buffer.Write([]byte(fmt.Sprintf("%s - %s: %s\n", symbol, component, info)))
 	err := buffer.Flush()
 	return check(err)
-
 }
