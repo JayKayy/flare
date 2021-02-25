@@ -50,12 +50,35 @@ func main() {
 	infraPodsBool, infraPodInfo := checkInfraHealth(clientset)
 	tallyResults(results, "Infrastructure Pods Health", infraPodsBool, infraPodInfo)
 
-	// check Nodes
+	nodesBool, nodesInfo := checkNodes(clientset)
+	tallyResults(results, "Node Healthchecks", nodesBool, nodesInfo)
+
 	// checkNodeAvailability(clientset)
 	// checkNodeCapacity(clientset)
 	// checkEvents
 	// checkWebhooks
 	// check logs of pods
+}
+
+// Check for unhealthy nodes
+func checkNodes(clientset *kubernetes.Clientset) (bool, string) {
+	output, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
+	check(err)
+	info := ""
+
+	for _, node := range output.Items {
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == "Ready" {
+				if condition.Status == "False" {
+					info += fmt.Sprintf("Node: %s is NotReady", node.Name)
+				}
+			}
+		}
+	}
+	if info != "" {
+		return false, info
+	}
+	return true, ""
 }
 
 // Detect whether there are pod restarts in the kube-system namespace
@@ -67,11 +90,14 @@ func checkInfraHealth(clientset *kubernetes.Clientset) (bool, string) {
 	info = ""
 
 	for _, pod := range output.Items {
-		if pod.Status.ContainerStatuses[0].RestartCount > 0 {
-			//if info == "" {
-			//	info = info + "\n"
-			//}
-			info = info + pod.GetName() + "\n"
+		for _, container := range pod.Status.ContainerStatuses {
+
+			if container.RestartCount > 0 {
+				//if info == "" {
+				//	info = info + "\n"
+				//}
+				info = info + fmt.Sprintf("%s - %s\n", pod.GetName(), container.Name)
+			}
 		}
 	}
 	if info == "" {
@@ -139,7 +165,11 @@ func tallyResults(buffer *bufio.Writer, component string, result bool, info stri
 	if !result {
 		symbol = fmt.Sprintf("%s%s%s", string(colorRed), "✗", string(colorReset))
 	}
-	buffer.Write([]byte(fmt.Sprintf("%s - %s: %s\n", symbol, component, info)))
+	if info != "" {
+		buffer.Write([]byte(fmt.Sprintf("%s - %s\n %s\n", symbol, component, info)))
+	} else {
+		buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, component)))
+	}
 	err := buffer.Flush()
 	return check(err)
 }
