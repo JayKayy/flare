@@ -34,9 +34,6 @@ check pvc's status
 check a pv's status
 check componentstatus
 
-
-
-
 */
 func main() {
 
@@ -48,87 +45,17 @@ func main() {
 
 	// Check health of master components
 	controlPlaneBool, controlPlaneInfo := checkMasterComponents(clientset)
-	// Write  ✓ Control Plane Health to buffer
 	tallyResults(results, "API Responsive", controlPlaneBool, controlPlaneInfo)
 	// Check infrastructure pods health
 	infraPodsBool, infraPodInfo := checkInfraHealth(clientset)
-	if infraPodsBool {
-		tallyResults(results, "Infrastructure Pod Health", infraPodsBool, infraPodInfo)
-	} else {
-		tallyResults(results, "Infrastructure Pods Health", infraPodsBool, infraPodInfo)
-	}
+	tallyResults(results, "Infrastructure Pods Health", infraPodsBool, infraPodInfo)
 
-	// Check Nodes
-
-	//checkNodeAvailability(clientset)
-	//checkNodeCapacity(clientset)
-
-	/*	deploymentsClient := clientset.AppsV1().Deployments(apiv1.NamespaceDefault)
-
-		deployment := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "demo-deployment",
-			},
-			Spec: appsv1.DeploymentSpec{
-				Replicas: int32Ptr(2),
-				Selector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						"app": "demo",
-					},
-				},
-				Template: apiv1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{
-						Labels: map[string]string{
-							"app": "demo",
-						},
-					},
-					Spec: apiv1.PodSpec{
-						Containers: []apiv1.Container{
-							{
-								Name:  "web",
-								Image: "nginx:1.12",
-								Ports: []apiv1.ContainerPort{
-									{
-										Name:          "http",
-										Protocol:      apiv1.ProtocolTCP,
-										ContainerPort: 80,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-
-		// Create
-
-		fmt.Println("Creating Deployment...")
-		result, err := deploymentsClient.Create(deployment)
-		if !strings.Contains(err.Error(), "already exists") {
-			check(err)
-		} else {
-			fmt.Println("Object already exists!")
-		}
-		log.Printf("Created deployment %q.\n", result.GetObjectMeta().GetName())
-
-		prompt()
-		fmt.Println("Updating deployment")
-
-		retryErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			result, getErr := deploymentsClient.Get("demo-deployment", metav1.GetOptions{})
-			if getErr != nil {
-				check(fmt.Errorf("Failed to get latest version of Deployment: %v", getErr))
-			}
-			result.Spec.Replicas = int32Ptr(1)
-			result.Spec.Template.Spec.Containers[0].Image = "nginx:latest"
-			_, updateErr := deploymentsClient.Update(result)
-			return updateErr
-
-		})
-		check(retryErr)
-		fmt.Println("Updated deployment!")
-	*/
+	// check Nodes
+	// checkNodeAvailability(clientset)
+	// checkNodeCapacity(clientset)
+	// checkEvents
+	// checkWebhooks
+	// check logs of pods
 }
 
 // Detect whether there are pod restarts in the kube-system namespace
@@ -158,11 +85,12 @@ func checkMasterComponents(clientset *kubernetes.Clientset) (bool, string) {
 	_, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
 	if !check(err) {
 		return false, "Connectivity failure"
-	} else {
-		return true, ""
 	}
+	return true, ""
 
 }
+
+// Check errors for Fatal
 func check(e error) bool {
 	if e != nil {
 		log.Fatal(e)
@@ -170,7 +98,7 @@ func check(e error) bool {
 	}
 	return true
 }
-func int32Ptr(i int32) *int32 { return &i }
+
 func prompt() {
 	fmt.Printf("-> Press Return key to continue.")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -200,6 +128,7 @@ func auth() *kubernetes.Clientset {
 
 	return clientset
 }
+
 func tallyResults(buffer *bufio.Writer, component string, result bool, info string) bool {
 	// symbol  ✓
 	// symbol  ✗
