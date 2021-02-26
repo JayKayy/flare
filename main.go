@@ -45,19 +45,71 @@ func main() {
 
 	// Check health of master components
 	controlPlaneBool, controlPlaneInfo := checkMasterComponents(clientset)
-	tallyResults(results, "API Responsive", controlPlaneBool, controlPlaneInfo)
+	writeResults(results, "API Responsive", controlPlaneBool, controlPlaneInfo)
 	// Check infrastructure pods health
 	infraPodsBool, infraPodInfo := checkInfraHealth(clientset)
-	tallyResults(results, "Infrastructure Pods Health", infraPodsBool, infraPodInfo)
-
-	nodesBool, nodesInfo := checkNodes(clientset)
-	tallyResults(results, "Node Healthchecks", nodesBool, nodesInfo)
+	writeResults(results, "Infrastructure Pods Health", infraPodsBool, infraPodInfo)
 
 	// checkNodeAvailability(clientset)
+	nodesHealthBool, nodesInfo := checkNodes(clientset)
+	writeResults(results, "Node Healthchecks", nodesHealthBool, nodesInfo)
+
 	// checkNodeCapacity(clientset)
+	//	nodesBool, nodesInfo := checkNodes(clientset)
+	//	writeResults(results, "Node Healthchecks", nodesBool, nodesInfo)
+
 	// checkEvents
+	eventsBool, eventsInfo := checkEvents(clientset)
+	writeResults(results, "Events", eventsBool, eventsInfo)
+
 	// checkWebhooks
+	webhooksBool, webhooksInfo := checkWebhooks(clientset)
+	writeResults(results, "Webhooks", webhooksBool, webhooksInfo)
+
 	// check logs of pods
+}
+
+func checkWebhooks(clientset *kubernetes.Clientset) (bool, string) {
+	info := ""
+	mutateOutput, MutateErr := clientset.AdmissionregistrationV1().MutatingWebhookConfigurations().List(v1.ListOptions{})
+	check(MutateErr)
+	validatingOutput, ValidateErr := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(v1.ListOptions{})
+	check(ValidateErr)
+	for _, mutWebhooks := range mutateOutput.Items {
+		for _, webhook := range mutWebhooks.Webhooks {
+			if *webhook.FailurePolicy == "Fail" {
+				info += fmt.Sprintf("Mutating Webhook: %s has a failurePolicy set to 'Fail'.\n", webhook.Name)
+			}
+		}
+	}
+	for _, valWebhooks := range validatingOutput.Items {
+		for _, webhook := range valWebhooks.Webhooks {
+			if *webhook.FailurePolicy == "Fail" {
+				info += fmt.Sprintf("Validating Webhook: %s has a failurePolicy set to 'Fail'.\n", webhook.Name)
+			}
+		}
+	}
+	if info == "" {
+		return true, ""
+	}
+	return false, info
+
+}
+
+func checkEvents(clientset *kubernetes.Clientset) (bool, string) {
+	info := ""
+	output, err := clientset.CoreV1().Events("").List(v1.ListOptions{})
+	check(err)
+
+	for _, event := range output.Items {
+		if event.Type == "Warning" {
+			info += fmt.Sprintf("%s %s/%s %s %s\n", event.Namespace, event.InvolvedObject.Kind, event.InvolvedObject.Name, event.Type, event.Message)
+		}
+	}
+	if info == "" {
+		return true, ""
+	}
+	return false, info
 }
 
 // Check for unhealthy nodes
@@ -155,7 +207,7 @@ func auth() *kubernetes.Clientset {
 	return clientset
 }
 
-func tallyResults(buffer *bufio.Writer, component string, result bool, info string) bool {
+func writeResults(buffer *bufio.Writer, component string, result bool, info string) bool {
 	// symbol  ✓
 	// symbol  ✗
 	colorReset := "\033[0m"
@@ -166,7 +218,7 @@ func tallyResults(buffer *bufio.Writer, component string, result bool, info stri
 		symbol = fmt.Sprintf("%s%s%s", string(colorRed), "✗", string(colorReset))
 	}
 	if info != "" {
-		buffer.Write([]byte(fmt.Sprintf("%s - %s\n %s\n", symbol, component, info)))
+		buffer.Write([]byte(fmt.Sprintf("%s - %s\n%s\n", symbol, component, info)))
 	} else {
 		buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, component)))
 	}
