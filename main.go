@@ -54,19 +54,49 @@ func main() {
 	nodesHealthBool, nodesInfo := checkNodes(clientset)
 	writeResults(results, "Node Healthchecks", nodesHealthBool, nodesInfo)
 
-	// checkNodeCapacity(clientset)
-	//	nodesBool, nodesInfo := checkNodes(clientset)
-	//	writeResults(results, "Node Healthchecks", nodesBool, nodesInfo)
-
-	// checkEvents
-	eventsBool, eventsInfo := checkEvents(clientset)
-	writeResults(results, "Events", eventsBool, eventsInfo)
+	overCommitBool, overCommitInfo := checkOverCommit(clientset)
+	writeResults(results, "Node Overcommit", overCommitBool, overCommitInfo)
 
 	// checkWebhooks
 	webhooksBool, webhooksInfo := checkWebhooks(clientset)
 	writeResults(results, "Webhooks", webhooksBool, webhooksInfo)
 
-	// check logs of pods
+	//checkEndpoints
+	endpointsBool, endpointsInfo := checkEndpoints(clientset)
+	writeResults(results, "Endpoints", endpointsBool, endpointsInfo)
+
+	// checkEvents
+	eventsBool, eventsInfo := checkEvents(clientset)
+	writeResults(results, "Events", eventsBool, eventsInfo)
+
+}
+
+func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
+	info := ""
+
+	// TODO this calculation should be similar to how its done in `kubectl describe node`
+
+	if info == "" {
+		return true, ""
+	}
+	return false, info
+}
+func checkEndpoints(clientset *kubernetes.Clientset) (bool, string) {
+	info := ""
+	endpoints, err := clientset.CoreV1().Endpoints("").List(v1.ListOptions{})
+	check(err)
+
+	for _, e := range endpoints.Items {
+		if len(e.Subsets) < 1 {
+			info = info + fmt.Sprintf("Service %s has no active endpoints!\n", e.Name)
+		}
+	}
+
+	if info == "" {
+		return true, ""
+	}
+	return false, info
+
 }
 
 func checkWebhooks(clientset *kubernetes.Clientset) (bool, string) {
