@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	log "github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -73,9 +74,38 @@ func main() {
 
 func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
+	nodes, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
+	if err != nil {
+		return false, err.Error()
+	}
+	for _, n := range nodes.Items {
+		cpuAlloc := n.Status.Allocatable.Cpu()
+		memAlloc := n.Status.Allocatable.Memory()
+		var cpuLimits *resource.Quantity = &resource.Quantity{}
+		var memLimits *resource.Quantity = &resource.Quantity{}
 
-	// TODO this calculation should be similar to how its done in `kubectl describe node`
-
+		// Find all pods on node n
+		podsList, err := clientset.CoreV1().Pods("").List(v1.ListOptions{FieldSelector: "spec.nodeName=" + n.Name})
+		if !check(err) {
+			return false, "Failure to get Pod List"
+		}
+		// For each pod calculate the resource requests and add them to total request
+		for _, pod := range podsList.Items {
+			for _, container := range pod.Spec.Containers {
+				cpuLimits.Add(container.Resources.Limits.Cpu().DeepCopy())
+				memLimits.Add(container.Resources.Limits.Memory().DeepCopy())
+			}
+		}
+		// compare requests to allocatable
+		// if requests are higher than allocatable set info return false
+		if cpuLimits.Value() > cpuAlloc.Value() {
+			info += fmt.Sprintf("node %s is overcommited on CPU! Requested: %s Allocateable: %s \n", n.Name, cpuLimits, cpuAlloc)
+		}
+		if memLimits.Value() > memAlloc.Value() {
+			info += fmt.Sprintf("node %s is overcommited on Memory! Requested: %s Allocateable: %s\n", n.Name, memLimits, memAlloc)
+		}
+	}
+	//Nothing overcommited, do not set info, return true
 	if info == "" {
 		return true, ""
 	}
@@ -178,7 +208,10 @@ func checkInfraHealth(clientset *kubernetes.Clientset) (bool, string) {
 				//if info == "" {
 				//	info = info + "\n"
 				//}
-				info = info + fmt.Sprintf("%s - %s\n", pod.GetName(), container.Name)
+				info = info + fmt.Sprintf("Container restarts Detected! Pod: %s  container: %s\n", pod.GetName(), container.Name)
+			}
+			if !container.Ready {
+				info = info + fmt.Sprintf("Container 'Not Ready' Detected! Pod: %s  in container: %s\n", pod.GetName(), container.Name)
 			}
 		}
 	}
@@ -195,7 +228,6 @@ func checkMasterComponents(clientset *kubernetes.Clientset) (bool, string) {
 		return false, "Connectivity failure"
 	}
 	return true, ""
-
 }
 
 // Check errors for Fatal
@@ -248,7 +280,7 @@ func writeResults(buffer *bufio.Writer, component string, result bool, info stri
 		symbol = fmt.Sprintf("%s%s%s", string(colorRed), "✗", string(colorReset))
 	}
 	if info != "" {
-		buffer.Write([]byte(fmt.Sprintf("%s - %s\n%s\n", symbol, component, info)))
+		buffer.Write([]byte(fmt.Sprintf("%s - %s\n%s", symbol, component, info)))
 	} else {
 		buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, component)))
 	}
