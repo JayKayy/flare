@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -74,7 +75,8 @@ func main() {
 
 func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
-	nodes, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
+	ctx := context.Background()
+	nodes, err := clientset.CoreV1().Nodes().List(ctx, v1.ListOptions{})
 	if err != nil {
 		return false, err.Error()
 	}
@@ -85,7 +87,7 @@ func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
 		var memLimits *resource.Quantity = &resource.Quantity{}
 
 		// Find all pods on node n
-		podsList, err := clientset.CoreV1().Pods("").List(v1.ListOptions{FieldSelector: "spec.nodeName=" + n.Name})
+		podsList, err := clientset.CoreV1().Pods("").List(ctx, v1.ListOptions{FieldSelector: "spec.nodeName=" + n.Name})
 		if !check(err) {
 			return false, "Failure to get Pod List"
 		}
@@ -113,7 +115,9 @@ func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
 }
 func checkEndpoints(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
-	endpoints, err := clientset.CoreV1().Endpoints("").List(v1.ListOptions{})
+	ctx := context.Background()
+
+	endpoints, err := clientset.CoreV1().Endpoints("").List(ctx, v1.ListOptions{})
 	check(err)
 
 	for _, e := range endpoints.Items {
@@ -131,9 +135,11 @@ func checkEndpoints(clientset *kubernetes.Clientset) (bool, string) {
 
 func checkWebhooks(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
-	mutateOutput, MutateErr := clientset.AdmissionregistrationV1().MutatingWebhookConfigurations().List(v1.ListOptions{})
+	ctx := context.Background()
+
+	mutateOutput, MutateErr := clientset.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, v1.ListOptions{})
 	check(MutateErr)
-	validatingOutput, ValidateErr := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(v1.ListOptions{})
+	validatingOutput, ValidateErr := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, v1.ListOptions{})
 	check(ValidateErr)
 	for _, mutWebhooks := range mutateOutput.Items {
 		for _, webhook := range mutWebhooks.Webhooks {
@@ -158,7 +164,9 @@ func checkWebhooks(clientset *kubernetes.Clientset) (bool, string) {
 
 func checkEvents(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
-	output, err := clientset.CoreV1().Events("").List(v1.ListOptions{})
+	ctx := context.Background()
+
+	output, err := clientset.CoreV1().Events("").List(ctx, v1.ListOptions{})
 	check(err)
 
 	for _, event := range output.Items {
@@ -174,9 +182,10 @@ func checkEvents(clientset *kubernetes.Clientset) (bool, string) {
 
 // Check for unhealthy nodes
 func checkNodes(clientset *kubernetes.Clientset) (bool, string) {
-	output, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
-	check(err)
+	ctx := context.Background()
 	info := ""
+	output, err := clientset.CoreV1().Nodes().List(ctx, v1.ListOptions{})
+	check(err)
 
 	for _, node := range output.Items {
 		for _, condition := range node.Status.Conditions {
@@ -195,7 +204,8 @@ func checkNodes(clientset *kubernetes.Clientset) (bool, string) {
 
 // Detect whether there are pod restarts in the kube-system namespace
 func checkInfraHealth(clientset *kubernetes.Clientset) (bool, string) {
-	output, err := clientset.CoreV1().Pods("kube-system").List(v1.ListOptions{})
+	ctx := context.Background()
+	output, err := clientset.CoreV1().Pods("kube-system").List(ctx, v1.ListOptions{})
 	check(err)
 	var info string
 
@@ -223,7 +233,9 @@ func checkInfraHealth(clientset *kubernetes.Clientset) (bool, string) {
 
 // Check that the API responds
 func checkMasterComponents(clientset *kubernetes.Clientset) (bool, string) {
-	_, err := clientset.CoreV1().Nodes().List(v1.ListOptions{})
+	ctx := context.Background()
+
+	_, err := clientset.CoreV1().Nodes().List(ctx, v1.ListOptions{})
 	if !check(err) {
 		return false, "Connectivity failure"
 	}
