@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	log "github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -23,56 +22,52 @@ with user input
 - Automatically debug and print out a list of potential checks
 - The option to backup and attempt autofix
 - Modular debug input files for customization of the tool
-
-
-SAMPLE checks:
-
-check for master api connectivity
-check for pod restarts
-check node availability
-check node capacity for workload
-check a service has valid endpoints
-check pvc's status
-check a pv's status
-check componentstatus
-
 */
+
 func main() {
 
-	// Allow writing to file at some point
-
+	// TODO Allow writing to file at some point
 	results := bufio.NewWriter(os.Stdout)
 	// Setup auth for cluster
 	clientset := auth()
 
-	// Check health of master components
+	// Run tests and write the results to `results`
+	// TODO wrap the tests in goroutines
+	// TODO write the results in goroutines
+
+	// Test the control plane apiserver responsiveness and write the results to file
 	controlPlaneBool, controlPlaneInfo := checkMasterComponents(clientset)
 	writeResults(results, "API Responsive", controlPlaneBool, controlPlaneInfo)
-	// Check infrastructure pods health
+	// Test the infrastructure pods for restarts and write the results to file
 	infraPodsBool, infraPodInfo := checkInfraHealth(clientset)
 	writeResults(results, "Infrastructure Pods Health", infraPodsBool, infraPodInfo)
-
-	// checkNodeAvailability(clientset)
+	// Test the health of the nodes and write the results to file
 	nodesHealthBool, nodesInfo := checkNodes(clientset)
 	writeResults(results, "Node Healthchecks", nodesHealthBool, nodesInfo)
-
+	// Test whether the nodes are overcommitted and write the results to file
 	overCommitBool, overCommitInfo := checkOverCommit(clientset)
 	writeResults(results, "Node Overcommit", overCommitBool, overCommitInfo)
-
-	// checkWebhooks
+	// Test for the presence of webhooks and their failure policies and write the results to file
 	webhooksBool, webhooksInfo := checkWebhooks(clientset)
 	writeResults(results, "Webhooks", webhooksBool, webhooksInfo)
-
-	//checkEndpoints
+	// Test for services without endpoints and write the results to file
 	endpointsBool, endpointsInfo := checkEndpoints(clientset)
 	writeResults(results, "Endpoints", endpointsBool, endpointsInfo)
-
-	// checkEvents
+	// Test for error or warning events and write the results to file
 	eventsBool, eventsInfo := checkEvents(clientset)
 	writeResults(results, "Events", eventsBool, eventsInfo)
 
 }
 
+/* These check functions accept an authenticated clientset object and look for specific issues
+in the cluster. They all follow the same argument and return signatures:
+
+ If there were no issues found the function returns (true, "").
+ If the target issues are found they return (false, str), where str is a string containing
+ output relevant to the failure.
+*/
+
+// Check if nodes are overcommitted on resources
 func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
 	ctx := context.Background()
@@ -88,8 +83,8 @@ func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
 
 		// Find all pods on node n
 		podsList, err := clientset.CoreV1().Pods("").List(ctx, v1.ListOptions{FieldSelector: "spec.nodeName=" + n.Name})
-		if !check(err) {
-			return false, "Failure to get Pod List"
+		if err != nil {
+			return false, "Failure to get Pod List" + err.Error()
 		}
 		// For each pod calculate the resource requests and add them to total request
 		for _, pod := range podsList.Items {
@@ -113,13 +108,16 @@ func checkOverCommit(clientset *kubernetes.Clientset) (bool, string) {
 	}
 	return false, info
 }
+
+// Check if any services have no endpoints
 func checkEndpoints(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
 	ctx := context.Background()
 
 	endpoints, err := clientset.CoreV1().Endpoints("").List(ctx, v1.ListOptions{})
-	check(err)
-
+	if err != nil {
+		return false, "Failure to get endpoints" + err.Error()
+	}
 	for _, e := range endpoints.Items {
 		if len(e.Subsets) < 1 {
 			info = info + fmt.Sprintf("Service %s has no active endpoints!\n", e.Name)
@@ -130,17 +128,21 @@ func checkEndpoints(clientset *kubernetes.Clientset) (bool, string) {
 		return true, ""
 	}
 	return false, info
-
 }
 
+// Check if any webhooks are installed with a failure policy of 'Fail'
 func checkWebhooks(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
 	ctx := context.Background()
 
-	mutateOutput, MutateErr := clientset.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, v1.ListOptions{})
-	check(MutateErr)
-	validatingOutput, ValidateErr := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, v1.ListOptions{})
-	check(ValidateErr)
+	mutateOutput, errMutate := clientset.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, v1.ListOptions{})
+	if errMutate != nil {
+		return false, "Failed getting mutatingwebhooks " + errMutate.Error()
+	}
+	validatingOutput, errValidate := clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, v1.ListOptions{})
+	if errValidate != nil {
+		return false, "Failed getting validatingwebhooks " + errValidate.Error()
+	}
 	for _, mutWebhooks := range mutateOutput.Items {
 		for _, webhook := range mutWebhooks.Webhooks {
 			if *webhook.FailurePolicy == "Fail" {
@@ -159,16 +161,17 @@ func checkWebhooks(clientset *kubernetes.Clientset) (bool, string) {
 		return true, ""
 	}
 	return false, info
-
 }
 
+// Check if any events are showing warnings
 func checkEvents(clientset *kubernetes.Clientset) (bool, string) {
 	info := ""
 	ctx := context.Background()
 
 	output, err := clientset.CoreV1().Events("").List(ctx, v1.ListOptions{})
-	check(err)
-
+	if err != nil {
+		return false, "Failed getting events " + err.Error()
+	}
 	for _, event := range output.Items {
 		if event.Type == "Warning" {
 			info += fmt.Sprintf("%s %s/%s %s %s\n", event.Namespace, event.InvolvedObject.Kind, event.InvolvedObject.Name, event.Type, event.Message)
@@ -180,13 +183,14 @@ func checkEvents(clientset *kubernetes.Clientset) (bool, string) {
 	return false, info
 }
 
-// Check for unhealthy nodes
+// Check for nodes in UnReady status
 func checkNodes(clientset *kubernetes.Clientset) (bool, string) {
 	ctx := context.Background()
 	info := ""
 	output, err := clientset.CoreV1().Nodes().List(ctx, v1.ListOptions{})
-	check(err)
-
+	if err != nil {
+		return false, "failed getting nodes" + err.Error()
+	}
 	for _, node := range output.Items {
 		for _, condition := range node.Status.Conditions {
 			if condition.Type == "Ready" {
@@ -202,11 +206,14 @@ func checkNodes(clientset *kubernetes.Clientset) (bool, string) {
 	return true, ""
 }
 
-// Detect whether there are pod restarts in the kube-system namespace
+// Check whether there are pods with restarts in the kube-system namespace
 func checkInfraHealth(clientset *kubernetes.Clientset) (bool, string) {
 	ctx := context.Background()
 	output, err := clientset.CoreV1().Pods("kube-system").List(ctx, v1.ListOptions{})
-	check(err)
+
+	if err != nil {
+		return false, "failed getting kube-system pods " + err.Error()
+	}
 	var info string
 
 	info = ""
@@ -231,26 +238,18 @@ func checkInfraHealth(clientset *kubernetes.Clientset) (bool, string) {
 	return false, info
 }
 
-// Check that the API responds
+// Check that the apiserver responds
 func checkMasterComponents(clientset *kubernetes.Clientset) (bool, string) {
 	ctx := context.Background()
 
 	_, err := clientset.CoreV1().Nodes().List(ctx, v1.ListOptions{})
-	if !check(err) {
-		return false, "Connectivity failure"
+	if err != nil {
+		return false, "Connectivity failure" + err.Error()
 	}
 	return true, ""
 }
 
-// Check errors for Fatal
-func check(e error) bool {
-	if e != nil {
-		log.Fatal(e)
-		return false
-	}
-	return true
-}
-
+// I dont know why this is here or why there no compile error for me not using it.
 func prompt() {
 	fmt.Printf("-> Press Return key to continue.")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -263,6 +262,8 @@ func prompt() {
 	fmt.Println()
 }
 
+// Setup a clientset using kubeconfig provided or the default ~/.kube/config
+// Returns an authenticated clientset
 func auth() *kubernetes.Clientset {
 	var kubeconfig *string
 	if home := homedir.HomeDir(); home != "" {
@@ -272,15 +273,27 @@ func auth() *kubernetes.Clientset {
 	}
 	flag.Parse()
 
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	check(err)
-
-	clientset, err := kubernetes.NewForConfig(config)
-	check(err)
-
+	config, errBuildConf := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	if errBuildConf != nil {
+		panic("Could not build config. " + errBuildConf.Error())
+	}
+	clientset, errClient := kubernetes.NewForConfig(config)
+	if errClient != nil {
+		panic("Failed creating clientset. " + errClient.Error())
+	}
 	return clientset
 }
 
+/* Write the results of the given tests to the buffer. This function takes in information
+about a test and its results
+
+buffer - A writeBuffer to a file that is where results will be written.
+component - The name of the test that the 'result' pertains to.
+result - The result from the 'component' test.
+info - A string that contains the details of a failure, or "" for a passed test
+
+returns bool for whether the write to file succeeded
+*/
 func writeResults(buffer *bufio.Writer, component string, result bool, info string) bool {
 	// symbol  ✓
 	// symbol  ✗
@@ -297,5 +310,9 @@ func writeResults(buffer *bufio.Writer, component string, result bool, info stri
 		buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, component)))
 	}
 	err := buffer.Flush()
-	return check(err)
+	if err != nil {
+		fmt.Println("Failed flushing buffer for report" + err.Error())
+		return false
+	}
+	return true
 }
