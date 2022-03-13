@@ -26,10 +26,22 @@ with user input
 
 func main() {
 
+	var kubeconfig *string
+	if home := homedir.HomeDir(); home != "" {
+		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+	} else {
+		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+	}
+	flag.Parse()
+
 	// TODO Allow writing to file at some point
 	results := bufio.NewWriter(os.Stdout)
+
 	// Setup auth for cluster
-	clientset := auth()
+	clientset, err := auth(kubeconfig)
+	if err != nil {
+		panic(err)
+	}
 
 	// Run tests and write the results to `results`
 	// TODO wrap the tests in goroutines
@@ -249,39 +261,29 @@ func checkMasterComponents(clientset *kubernetes.Clientset) (bool, string) {
 	return true, ""
 }
 
-// I dont know why this is here or why there no compile error for me not using it.
-func prompt() {
-	fmt.Printf("-> Press Return key to continue.")
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		break
-	}
-	if err := scanner.Err(); err != nil {
-		panic(err)
-	}
-	fmt.Println()
-}
-
 // Setup a clientset using kubeconfig provided or the default ~/.kube/config
 // Returns an authenticated clientset
-func auth() *kubernetes.Clientset {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
+func auth(kubeconfig *string) (*kubernetes.Clientset, error) {
+
+	// Quiet the errors printed to stdOut from BuildConfigFromFlags and NewForConfig
+	// commend these two lines out for debugging
+	stdErrBackup := os.Stderr
+	os.Stderr, _ = os.Open(os.DevNull)
 
 	config, errBuildConf := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if errBuildConf != nil {
-		panic("Could not build config. " + errBuildConf.Error())
+		//	fmt.Println("Could not build config. Returning err: " + errBuildConf.Error())
+		os.Stderr = stdErrBackup
+		return nil, errBuildConf
 	}
 	clientset, errClient := kubernetes.NewForConfig(config)
 	if errClient != nil {
-		panic("Failed creating clientset. " + errClient.Error())
+		//	fmt.Println("Failed creating clientset. Returning err: " + errClient.Error())
+		os.Stderr = stdErrBackup
+		return nil, errClient
 	}
-	return clientset
+	os.Stderr = stdErrBackup
+	return clientset, nil
 }
 
 /* Write the results of the given tests to the buffer. This function takes in information
