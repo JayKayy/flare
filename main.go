@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -38,24 +39,25 @@ func main() {
 
 	clientSet := auth()
 
-	// Run tests and write the results to `results`
-	// TODO wrap the tests in goroutines
-	// TODO write the results in goroutines
-
 	// TODO Allow writing to file at some point
 	output := bufio.NewWriter(os.Stdout)
 
-	resultList := []*Result{}
+	var resultList []*Result
+	var wg sync.WaitGroup
 
 	for _, check := range checks {
 		fn := *check
-		resultList = append(resultList, fn(clientSet))
+		wg.Add(1)
+		go func() {
+			resultList = append(resultList, fn(clientSet))
+			wg.Done()
+		}()
 	}
+	wg.Wait()
 
 	for _, result := range resultList {
 		writeResults(output, result)
 	}
-
 }
 
 // authKubeConfig set up a clientset using kubeconfig provided or the default ~/.kube/config
@@ -106,9 +108,15 @@ func writeResults(buffer *bufio.Writer, r *Result) bool {
 		symbol = fmt.Sprintf("%s%s%s", string(colorRed), "✗", string(colorReset))
 	}
 	if r.Details != "" {
-		buffer.Write([]byte(fmt.Sprintf("%s - %s\n%s", symbol, r.Name, r.Details)))
+		_, err := buffer.Write([]byte(fmt.Sprintf("%s - %s\n%s", symbol, r.Name, r.Details)))
+		if err != nil {
+			return false
+		}
 	} else {
-		buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, r.Name)))
+		_, err := buffer.Write([]byte(fmt.Sprintf("%s - %s\n", symbol, r.Name)))
+		if err != nil {
+			return false
+		}
 	}
 	err := buffer.Flush()
 	if err != nil {
