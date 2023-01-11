@@ -11,7 +11,7 @@ func TestLocalAuth(t *testing.T) {
 	file := homeDir + "/.kube/config"
 	// use local file?
 
-	_, err := auth(&file)
+	_, err := authKubeConfig(&file)
 	// Expected err == nil
 	// Got
 	if err != nil {
@@ -24,7 +24,7 @@ func TestAuthPartial(t *testing.T) {
 	badFile := "test/partial_config"
 	// This file is good enough to parse
 
-	_, err := auth(&badFile)
+	_, err := authKubeConfig(&badFile)
 	//fmt.Println(cs)
 	//	fmt.Println(err)
 	// Expected non-nil
@@ -37,7 +37,7 @@ func TestAuthMissing(t *testing.T) {
 	missingFile := "test/324567890hfusagdf7tqwyhrnuh"
 	// use local file?
 
-	_, err := auth(&missingFile)
+	_, err := authKubeConfig(&missingFile)
 	// Expected non-nil
 	if err == nil {
 		t.Errorf("Expected an Error but err was nil")
@@ -47,7 +47,7 @@ func TestAuthEmptyFile(t *testing.T) {
 	missingFile := "test/empty_config"
 	// use local file?
 
-	_, err := auth(&missingFile)
+	_, err := authKubeConfig(&missingFile)
 	// Expected non-nil
 	if err == nil {
 		t.Errorf("Expected an Error but err was nil")
@@ -57,7 +57,7 @@ func TestAuthNoPath(t *testing.T) {
 	badFile := ""
 	// use local file?
 
-	_, err := auth(&badFile)
+	_, err := authKubeConfig(&badFile)
 	// Expected non-nil
 	if err == nil {
 		t.Errorf("Expected an Error but err was nil")
