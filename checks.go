@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	v1batch "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -16,6 +17,10 @@ in the cluster. They all follow the same argument and return signatures:
  If the target issues are found they return (false, str), where str is a string containing
  output relevant to the failure.
 */
+
+var (
+	cronJobThreshold = 100
+)
 
 // Check that the apiserver responds
 var (
@@ -266,7 +271,7 @@ var (
 			return &Result{
 				Name:    name,
 				Pass:    false,
-				Details: "getting kube-system pods",
+				Details: "failed to get kube-system pods",
 				Err:     err,
 			}
 		}
@@ -300,5 +305,71 @@ var (
 			Details: info,
 		}
 	}
-	checks = []Check{&cp, &endpoints, &events, &infra, &nodes, &overCommit, &webhooks}
+	cronjob = func(clientset *kubernetes.Clientset) *Result {
+		name := "cronjobs"
+		ctx := context.Background()
+		info := ""
+		output, err := clientset.BatchV1().CronJobs("").List(ctx, v1.ListOptions{})
+		if err != nil {
+			info = "Failed to get cronjobs"
+			return &Result{
+				Name:    name,
+				Pass:    false,
+				Details: info,
+				Err:     err,
+			}
+		}
+		var pass = true
+		for _, cron := range output.Items {
+			if len(cron.Status.Active) > cronJobThreshold {
+				info += fmt.Sprintf("Cronjob %s/%s, has too many active jobs: %d\n", cron.Namespace, cron.Name, len(cron.Status.Active))
+				pass = false
+			}
+			// This may not always be wrong consider a warning status
+			if cron.Spec.ConcurrencyPolicy == v1batch.AllowConcurrent {
+				info += fmt.Sprintf("⚠️ Cronjob %s, is set to AllowConcurrent\n", cron.Name)
+			}
+		}
+		return &Result{
+			Name:    name,
+			Pass:    pass,
+			Details: info,
+			Err:     err,
+		}
+	}
+	oomkilled = func(clientset *kubernetes.Clientset) *Result {
+		name := "oomkilled"
+		ctx := context.Background()
+		info := ""
+		output, err := clientset.CoreV1().Pods("").List(ctx, v1.ListOptions{})
+		if err != nil {
+			info += "Failed to get pods"
+			return &Result{
+				Name:    name,
+				Pass:    false,
+				Details: info,
+				Err:     err,
+			}
+		}
+		pass := true
+		for _, pod := range output.Items {
+			for _, status := range pod.Status.ContainerStatuses {
+				if status.LastTerminationState.Terminated != nil {
+					if status.LastTerminationState.Terminated.Reason == "OOMKilled" {
+						pass = false
+						info += fmt.Sprintf("Pod %s/%s has previous OOMKilled state\n", pod.GetNamespace(), pod.GetName())
+					}
+				}
+			}
+		}
+		return &Result{
+			Name:    name,
+			Pass:    pass,
+			Details: info,
+			Err:     err,
+		}
+	}
+	// for running singular checks
+	//checks = []Check{&oomkilled}
+	checks = []Check{&cp, &endpoints, &events, &infra, &nodes, &overCommit, &webhooks, &cronjob, &oomkilled}
 )

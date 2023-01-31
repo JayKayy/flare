@@ -67,6 +67,10 @@ func authKubeConfig(kubeconfig *string) (*kubernetes.Clientset, error) {
 	// Quiet the errors printed to stdOut from BuildConfigFromFlags and NewForConfig
 	// commend these two lines out for debugging
 	stdErrBackup := os.Stderr
+	defer func() {
+		os.Stderr = stdErrBackup
+	}()
+
 	os.Stderr, _ = os.Open(os.DevNull)
 
 	config, errBuildConf := clientcmd.BuildConfigFromFlags("", *kubeconfig)
@@ -81,7 +85,6 @@ func authKubeConfig(kubeconfig *string) (*kubernetes.Clientset, error) {
 		os.Stderr = stdErrBackup
 		return nil, errClient
 	}
-	os.Stderr = stdErrBackup
 	return clientset, nil
 }
 
@@ -103,6 +106,7 @@ func writeResults(buffer *bufio.Writer, r *Result) bool {
 	colorReset := "\033[0m"
 	colorGreen := "\033[32m"
 	colorRed := "\033[31m"
+
 	symbol := fmt.Sprintf("%s%s%s", string(colorGreen), "✓", string(colorReset))
 	if !r.Pass {
 		symbol = fmt.Sprintf("%s%s%s", string(colorRed), "✗", string(colorReset))
@@ -128,10 +132,12 @@ func writeResults(buffer *bufio.Writer, r *Result) bool {
 
 func auth() *kubernetes.Clientset {
 	var kubeconfig *string
+	// If home directory is set, have ~/.kube/config be the default
+	// TODO do we even need this if, just set as default regardless?
 	if home := homedir.HomeDir(); home != "" {
 		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
 	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+		kubeconfig = flag.String("kubeconfig", "", "(optional) absolute path to the kubeconfig file")
 	}
 	flag.Parse()
 
