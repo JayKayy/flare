@@ -31,7 +31,7 @@ Ideas:
 - interactive walkthrough of steps with questions for debugging
 with user input
 - Automatically debug and print out a list of potential checks
-- The option to backup and attempt autofix
+- The option to back up and attempt autofix
 - Modular debug input files for customization of the tool
 */
 
@@ -40,6 +40,7 @@ func main() {
 	clientSet := auth()
 
 	// TODO Allow writing to file at some point
+
 	output := bufio.NewWriter(os.Stdout)
 
 	var resultList []*Result

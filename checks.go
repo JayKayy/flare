@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	v1batch "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -60,8 +62,8 @@ var (
 		for _, n := range nodes.Items {
 			cpuAlloc := n.Status.Allocatable.Cpu()
 			memAlloc := n.Status.Allocatable.Memory()
-			var cpuLimits *resource.Quantity = &resource.Quantity{}
-			var memLimits *resource.Quantity = &resource.Quantity{}
+			var cpuLimits = &resource.Quantity{}
+			var memLimits = &resource.Quantity{}
 
 			// Find all pods on node n
 			podsList, err := clientset.CoreV1().Pods("").List(ctx, v1.ListOptions{FieldSelector: "spec.nodeName=" + n.Name})
@@ -369,7 +371,52 @@ var (
 			Err:     err,
 		}
 	}
-	// for running singular checks
-	//checks = []Check{&oomkilled}
-	checks = []Check{&cp, &endpoints, &events, &infra, &nodes, &overCommit, &webhooks, &cronjob, &oomkilled}
+	
+	ciliumLogs = func(clientset *kubernetes.Clientset) *Result {
+		name := "ciliumLogs"
+		ctx := context.Background()
+		var info string
+		podLogOpts := corev1.PodLogOptions{}
+		output, err := clientset.CoreV1().Pods("kube-system").List(
+			ctx, v1.ListOptions{
+				LabelSelector: "k8s-app=cilium",
+			},
+		)
+		if err != nil {
+			return &Result{
+				Name:    name,
+				Pass:    false,
+				Details: err.Error(),
+				Err:     err,
+			}
+		}
+
+		info = ""
+		pass := true
+		for _, pod := range output.Items {
+			// Consider previous logs via PodLogOptions.Previous
+			logs, err := clientset.CoreV1().Pods("kube-system").GetLogs(pod.Name, &podLogOpts).DoRaw(ctx)
+			if err != nil {
+				info = "Failed getting logs for container " + pod.Name
+			}
+
+			for _, line := range strings.Split(string(logs), "\n") {
+				if strings.Contains(strings.ToLower(line), "level=error") {
+					pass = false
+					info = info + fmt.Sprintf("Error in container %s: %s\n", pod.Name, line)
+				}
+			}
+		}
+		return &Result{
+			Name:    name,
+			Pass:    pass,
+			Details: info,
+			Err:     err,
+		}
+	}
+
+	// List the checks
+	//checks = []Check{&ciliumLogs}
+	checks = []Check{&cp, &endpoints, &events, &infra, &nodes, &overCommit, &webhooks, &cronjob, &oomkilled, &ciliumLogs}
+	// Search cilium container logs for errors
 )
